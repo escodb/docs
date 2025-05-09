@@ -1,0 +1,131 @@
+# Building blocks
+
+Throughout this documentation we will refer to a few common constructions that
+are used repeatedly in EscoDB's design. This page lists all such constructions
+and provides a detailed description of their operation.
+
+
+## Canonical encoding
+
+In a number of places, EscoDB needs to authenticate a collection of values,
+either as the additional data for authenticated encryption, or as plaintext that
+is authenticated using a MAC. Such collections are encoded in a particular way
+to make them resistant to canonicalisation attacks, and we refer to this as
+_canonical encoding_. It is based on the [PAE encoding scheme in
+PASETO](https://github.com/paseto-standard/paseto-spec/blob/master/docs/01-Protocol-Versions/Common.md#pae-definition).
+
+For example, when a stored item is encrypted, it is bound to the file it is
+stored in, the scope `items`, the item's path (e.g. `/doc`) and the ID of the
+key used to encrypt it. This _context_ is represented by the structure:
+
+```js
+{ file: 'shard-0000-ffff', scope: 'items', path: '/doc', key: 1 }
+```
+
+To encode this value into a single buffer that can be passed to cryptographic
+algorithms, the following steps are followed:
+
+- Sort the key-value pairs in the context by their key
+- Flatten the pairs into a single array of the form `[key1, value1, key2,
+  value2, ...]`
+- Convert each item in the array to a buffer; strings are converted to their
+  UTF-8 encoding, and numbers are converted to big-endian unsigned 64-bit
+  integers (u64)
+- Write the length of this array as a u64
+- For each item in the array, write its length as a u64, followed by the bytes
+  of the item itself
+
+For the example context above, sorting and converting to an array gives the
+following:
+
+```js
+['file', 'shard-0000-ffff', 'key', 1, 'path', '/doc', 'scope', 'items']
+```
+
+Encoding this into buffers gives the following output:
+
+```
+00 00 00 00 00 00 00 08  00 00 00 00 00 00 00 04  |................|
+66 69 6c 65 00 00 00 00  00 00 00 0f 73 68 61 72  |file........shar|
+64 2d 30 30 30 30 2d 66  66 66 66 00 00 00 00 00  |d-0000-ffff.....|
+00 00 03 6b 65 79 00 00  00 00 00 00 00 08 00 00  |...key..........|
+00 00 00 00 00 01 00 00  00 00 00 00 00 04 70 61  |..............pa|
+74 68 00 00 00 00 00 00  00 04 2f 64 6f 63 00 00  |th......../doc..|
+00 00 00 00 00 05 73 63  6f 70 65 00 00 00 00 00  |......scope.....|
+00 00 05 69 74 65 6d 73                           |...items|
+```
+
+
+## Encryption
+
+Whenever we talk about a value being _encrypted_, we mean that the following
+steps are taken:
+
+- The inputs are:
+  - Some 256-bit encryption key
+  - A plaintext, usually a JSON string or another key
+  - A _binding context_, a collection of key-value pairs that represent the
+    identity of the encrypted value and the location where it is stored
+- Generate a random 96-bit initialisation vector (IV)
+- Compute the additional authenticated data (AAD) as the canonical encoding of
+  the binding context
+- Apply AES-256-GCM to the key, the IV, the plaintext, and the AAD to produce a
+  ciphertext and a 128-bit authentication tag
+- Return the concatenation of the IV, ciphertext and authentication tag
+
+Decryption will fail unless the same binding context is provided to the
+decryption algorithm. This lets us prevent tampering of the ciphertext itself,
+as well as checking the ciphertext has not been moved between files or to a
+different location in the same file.
+
+### IV construction
+
+We use random IVs with AES-GCM because the operation of EscoDB means that a
+deterministic IV construction would be highly likely to produce IV collisions.
+EscoDB has no central server, and lets any number of clients access the storage
+concurrently. If the IV was driven by, say, a counter in the stored files, it is
+very likely that two clients concurrently updating the same file would read the
+same counter value and therefore use the same IV for their next encryption.
+
+Even though one of these clients would have their write rejected by the storage
+layer's concurrency control, they would still both send their ciphertexts with
+identical IVs over the communication channel between the client and the storage
+media, and this would create an opportunity for anybody observing said channel
+to break the encryption.
+
+Since IV reuse completely breaks the security of AES-GCM, a deterministic IV
+construction is not viable without some co-ordination between clients. We
+therefore use random IVs and ensure that key usage limits are not exceeded.
+
+### Usage limits
+
+The security of AES-GCM relies on the IV being unique for each encryption under
+the same key. If an IV is ever repeated, this can allow an attacker to recover
+plaintext, and to forge their own ciphertexts with apparently valid
+authentication tags. To ensure the collision probability remains below
+2<sup>-32</sup> for a random 96-bit IV, each key must be used for no more than
+2<sup>32</sup> encryptions.
+
+Additionally, it is important that the key stream generated by AES-GCM be
+indistinguishable from random data. The block counter in GCM is a 32-bit value,
+so as long as the IV is different for each encryption, and each plaintext does
+not exceed 2<sup>32</sup> blocks (64 GiB) in length, then every block of input
+to the AES cipher under the same key will be unique. The AES block cipher is a
+pseudo-random _permutation_ (PRP), rather than a pseudo-random function (PRF),
+so that means every _output_ from the block cipher under the same key will also
+be unique.
+
+Once a certain number of blocks have been encrypted under the same key, the fact
+that the output of the AES block cipher never repeats can be used to distinguish
+it from random data. With a block size of 128 bits, to keep the distinguishing
+advantage below 2<sup>-32</sup> each key must be used for no more than
+2<sup>48</sup> total blocks of input (4 PiB, or 1 MiB per message on average).
+On top of the plaintext blocks, AES-GCM consumes one additional block to encrypt
+the authentication tag, and this counts towards the usage limit.
+
+For additional safety with multiple clients operating independently, EscoDB
+lowers these limits to 2<sup>31</sup> encryptions and 2<sup>47</sup> total
+blocks encrypted under each key, i.e. we reduce each limit by one-half. This
+provides a safety margin so that if a key has almost reached its usage limit,
+two concurrent clients can safely use it a few more times without exceeding the
+"true" limit.
