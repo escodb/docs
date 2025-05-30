@@ -167,10 +167,8 @@ children of the directory at `path`, or `null` if the directory does not exist.
 await handle.list('/users/')
 // -> null
 
-await Promise.all([
-  handle.update('/users/alice', () => ({ name: 'Alice' })),
-  handle.update('/users/bob/contacts', () => ({ email: 'bob@example.com' }))
-])
+await handle.update('/users/alice', () => ({ name: 'Alice' }))
+await handle.update('/users/bob/contacts', () => ({ email: 'bob@example.com' }))
 
 await handle.list('/users/')
 // -> ['alice', 'bob/']
@@ -182,10 +180,8 @@ Returns an async iterator containing the names of all the documents that are
 descendants of the directory at `path`.
 
 ```js
-await Promise.all([
-  handle.update('/users/alice', () => ({ name: 'Alice' })),
-  handle.update('/users/bob/contacts', () => ({ email: 'bob@example.com' }))
-])
+await handle.update('/users/alice', () => ({ name: 'Alice' }))
+await handle.update('/users/bob/contacts', () => ({ email: 'bob@example.com' }))
 
 let paths = []
 
