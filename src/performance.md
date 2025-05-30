@@ -170,6 +170,22 @@ each other and cause a lot of retries before all of them eventually succeeded.
 To produce a more optimal outcome, each `update()` is instead executed one at a
 time.
 
+To give an idea of the difference that `task.update()` makes, below is the
+result of a benchmark for updating 1,000 documents with randomised paths, stored
+across 4 shards, via `FileAdapter` with `fsync` turned off to reduce the write
+latency:
+
+|                              | Reads | Writes | Time (ms) |
+| ---------------------------- | ----- | ------ | --------- |
+| sequential `handle.update()` | 2,618 |  2,618 |     1,163 |
+| sequential `task.update()`   |     4 |  2,632 |       980 |
+| concurrent `task.update()`   |     4 |      8 |        59 |
+
+Your results will depend on the platform you're running on and the latency
+properties of your storage adapter, but this illustrates how big a difference
+this optimisation can make. On remote storage systems with even higher latency
+this difference can be enormous.
+
 ### Execution planning
 
 In general, any `update()` or `remove()` executed by a task will be merged into
