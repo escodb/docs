@@ -8,17 +8,12 @@ const { Store, FileAdapter } = require('@escodb/core')
 
 The full set of exported classes is:
 
-- `Store`: the core class representing an EscoDB instance backed by a specific
+- `Store`: The core class representing an EscoDB instance backed by a specific
   storage location. This is the main entry point for all interactions with a
   store.
 
-- `FileAdapter`: storage adapter for storing content on the local filesystem.
-  Most current applications will use this adapter.
-
-- `MemoryAdapter`: storage adapter that stores content in memory and does not
-  write to any persistent store. This adapter is mainly used for testing; if
-  your application uses a remote storage backend, it can be swapped out for this
-  adapter and it will work identically.
+- `FileAdapter`, `MemoryAdapter`: These are covered under [Storage
+  adapters](./storage.md).
 
 
 ## Creating and opening a store
