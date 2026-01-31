@@ -52,5 +52,6 @@ The meaning of the fields is as follows:
   different stores. The Routing Key is also encrypted under the User Key, with
   the binding context `{ file: 'config', scope: 'keys.router' }`.
 
-The User Key (derived from the user's password) is only used to encrypt the keys
-in this file, when the store is first created.
+All keys and salts contained in the config are independent random values. The
+User Key (derived from the user's password) is only used to encrypt the keys in
+this file, when the store is first created.
